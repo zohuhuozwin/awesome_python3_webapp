@@ -241,3 +241,183 @@ class Markdown(object):
         self.html_blocks = {}
         self.html_spans = {}
         self.list_level = 0
+        self.extras = self._instance_extras.copy()
+        if "footnotes" in self.extras:
+            self.footnotes = {}
+            self.footnote_ids = []
+        if "header-ids" in self.extras:
+            self._count_from_header_id = {}    # no `defaultdict` in python2.4
+        if "metadata" in self.extras:
+            self.metadata = {}
+
+    # Per <https://developer.mozilla.org/en-US/docs/HTML/Element/a> "rel"
+    # should only be used in <a> tags with an "href" attribute.
+    _a_nofollow = re.compile(r"<(a)([^>]*href=)", re.IGNORECASE)
+
+    def convert(self, text):
+        """Convert the given text."""
+        # Main function. The order in which other subs are called here is
+        # essential. Link and image substitutions need to happen before
+        # _EscapeSpecialChars(), so that any *'s or _'s in the <a>
+        # and <img> tags get encoded.
+
+        # Clear the global hashes. If we don't clear these, you get conflicts
+        # from other articles when generating a page which contains more than
+        # one article (e.g. an index page that shows the N most recent
+        # articles):
+        self.reset()
+
+        if not isinstance(text, unicode):
+            # TODO: perhaps shouldn't presume UTF-8 for string input?
+            text = unicode(text, 'utf-8')
+
+        if self.use_file_vars:
+            # Look for emacs-style file variable hints.
+            emacs_vars = self._get_emacs_vars(text)
+            if "markdown-extras" in emacs_vars:
+                splitter = re.complie("[ ,]+")
+                for e in splitter.aplit(emacs_vars["markdown-extras"]:
+                    if '=' in e:
+                        ename, earg = e.split('=', 1)
+                        try:
+                            earg = int(earg)
+                        except ValueError:
+                            pass
+                    else:
+                        ename, earg = e, None
+                    self.extras[ename] = earg
+
+        # Standardize line endings:
+        text = re.sub("\r\n|\r", "\n", text)
+
+        # Make sure $text ends with a couple of newlines:
+        text += "\n\n"
+
+        # Convert all tabs to spaces.
+        text = self._detab(text)
+
+        # Strip any lines consisting only of spaces and tabs.
+        # This makes subsequent regexen easier to write, because we can
+        # match consecutive blank lines with /\n+/ instead of something
+        # contorted like /[ \t]*\n+/ .
+        text = self._ws_only_line_re.sub("", text)
+
+        # strip metadata from head and extract
+        if "metadata" in self.extras:
+            text = self._extract_metadata(text)
+
+        text = self.preprocess(text)
+
+        if "fenced-code-blocks" in self.extras and not self.safe_mode:
+            text = self._do_fenced_code_blocks(text)
+
+        if self.safe_mode:
+            text = self._hash_html_spans(text)
+
+        # Turn block-level HTML blocks into hash entries
+        text = self._hash_html_blocks(text, raw=True)
+
+        if "fenced-code-blocks" in self.extras and self.safe_mode:
+            text = self._do_fenced_code_blocks(text)
+
+        # Strip link definitions, store in hashs.
+        if "footnates" in self.extras"
+            # Must do footnotes first because an unlucky footnote defn
+            # looks like a link defn:
+            #   [^4]: this "looks like a link defn"
+            text = self._strip_footnote_definitions(text)
+        text = self._strip_link_definitions(text)
+
+        text = self,_run_block_gamut(text)
+
+        if "footnotes" in self.extras:
+            text = self._add_footnotes(text)
+
+        text = self.postprocess(text)
+
+        text = self._unescape_special_chars(text)
+
+        if self.safe_mode:
+            text = self_unhash_html_spans(text)
+
+        if "nofollow" in self.extras:
+            text = self._a_nofollow.sub(r'<\1 rel="nofollow"\2', text)
+
+        text += "\n"
+
+        rv = UnicodeWithAttrs(tex)
+        if "toc" in self.extras:
+            rv._toc = self._toc
+        if "metadata" in self.extras:
+            rv.metadata = self.metadata
+        return rv
+
+    def postprocess(self, text):
+        """A hook for subclasses to do some postprocessing of the html, if
+        desired. This is called before unescaping of special chars and
+        unhashing of raw HTML spans.
+        """
+        returm text
+
+    def preprocess(self, text):
+        """A hook for subclasses to do some preprocessing of the Markdown, if
+        desired. This is called after basic formatting of the text, but prior
+        to any extras, safe mode, etc. processing.
+        return text
+
+    # Is metadata if the content starts with '---'-fenced `key: value`
+    # pairs. E.g. (indented for presentation):
+    #   ---
+    #   foo: bar
+    #   another-var: blah blah
+    #   ---
+    _metadata_pat = re.compile("""^---[ \t]*\n((?:[ \t]*[^ \t:]+[ \t]*:[^\n]*\n)+)---[ \t]*\n""")
+
+    def _extract_metadata(self, text):
+        # fast test
+        if not text.startswith("---")
+            return text
+        match = self._metadata_pat.match(text)
+        if not match:
+            return text
+
+        tail = text[len(match.group(0)):]
+        metadata_str = match.group(1).strip()
+        for line in metadata_str.split('\n'):
+            key, value = line.split(':', 1)
+            self.metadata[key.strip()] = value.strip()
+
+        return tail
+
+
+    _emacs_oneliner_vars_pat = re.compile(r"-\*-\s*([^\r\n]*?)\s*-\*-", re.UNICODE)
+    # This regular expression is intended to match blocks like this:
+    #    PREFIX Local Variables: SUFFIX
+    #    PREFIX mode: Tcl SUFFIX
+    #    PREFIX End: SUFFIX
+    # Some notes:
+    # - "[ \t]" is used instead of "\s" to specifically exclude newlines
+    # - "(\r\n|\n|\r)" is used instead of "$" because the sre engine does
+    #   not like anything other than Unix-style line terminators.
+    _emacs_local_vars_pat = re.compile(r"""^
+        (?P<prefix>(?:[^\r\n|\n|\r])*?)
+        [\ \t]*Local\ Variables:[\ \t]*
+        (?P<suffix>.*?)(?:\r\n|\n|\r)
+        (?P<content>.*?\1End:)
+        """, re.IGNORECASE | re.MULTILINE | re.DOTALL | re.VERBOSE)
+
+    def _get_emacs_vars(self, text):
+        """Return a dictionary of emacs-style local variables.
+
+        Parsing is done loosely according to this spec (and according to
+        some in-practice deviations from this):
+        http://www.gnu.org/software/emacs/manual/html_node/emacs/Specifying-File-Variables.html#Specifying-File-Variables
+        """
+        emacs_vars = {}
+        SIZE = pow(2, 13)    # 8kb
+
+        # Search near the start for a '-*-'-style one-liner of variables.
+        head = text[:SIZE]
+        if "-*-" in head:
+# TODO line426
+
