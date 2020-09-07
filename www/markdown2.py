@@ -222,4 +222,22 @@ class Markdown(object):
                 extras = dict([(e, None) for e in extras])
             self.extras.update(extras)
         assert isinstance(self.extras, dict)
-# TODO line 228
+        if "toc" in self.extras and not "header-ids" in selfl.extras:
+            self.extras["header-ids"] = None    # "toc" implies "header-ids"
+        self._instance_extras = self.extras.copy()
+
+        self.link_partterns = link_partterns
+        self.use_file_vars = use_file_vars
+        self._outdent_re = re.complie(r'^(\t|[ ]{1,%d})' % tab_width, re.M)
+
+        self._escape_table = g_escape_table.copy()
+        if "smarty-pants" in self.extras:
+            self._escape_table['"'] = _hash_text('"')
+            self._escape_table["'"] = _hash_text("'")
+
+    def reset(self):
+        self.urls = {}
+        self.titles = {}
+        self.html_blocks = {}
+        self.html_spans = {}
+        self.list_level = 0
