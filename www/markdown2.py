@@ -1,4 +1,6 @@
 #!/usr/nim/env python3
+# Copyright (c)
+# Copyright (c)
 # License: GNU GENERAL PUBLIC LICENSE
 
 from __future__ import generators
@@ -36,8 +38,10 @@ number of extras (e.g., code syntax coloring, footnotes) as described on
 
 cmdln_desc = """A fast and complete Python implementation of Markdown, a
 text-to-HTML conversion tool for web writers.
+
 Supported extra syntax options (see -x|--extras option below and
 see <https://github.com/trentm/python-markdown2/wiki/Extras> for details):
+
 * code-friendly: Disable _ and __ for em and strong.
 * cuddled-lists: Allow lists to be cuddled to the preceding paragraph.
 * fenced-code-blocks: Allows a code block to not have to be indented
@@ -199,7 +203,6 @@ class Markdown(object):
                  extras=None, link_patterns=None, use_file_vars=False):
         if html4tags:
             self.empty_element_suffix = ">"
-
         else:
             self.empty_element_suffix = "/>"
         self.tab_width = tab_width
@@ -216,9 +219,9 @@ class Markdown(object):
         if self.extras is None:
             self.extras = {}
         elif not isinstance(self.extras, dict):
-            self.extras = dict([(e, None) for e in self extras])
+            self.extras = dict([(e, None) for e in self.extras])
         if extras:
-            if not in isinstance(extras, dict):
+            if not isinstance(extras, dict):
                 extras = dict([(e, None) for e in extras])
             self.extras.update(extras)
         assert isinstance(self.extras, dict)
@@ -276,7 +279,7 @@ class Markdown(object):
             emacs_vars = self._get_emacs_vars(text)
             if "markdown-extras" in emacs_vars:
                 splitter = re.complie("[ ,]+")
-                for e in splitter.aplit(emacs_vars["markdown-extras"]:
+                for e in splitter.aplit(emacs_vars["markdown-extras"]):
                     if '=' in e:
                         ename, earg = e.split('=', 1)
                         try:
@@ -321,7 +324,7 @@ class Markdown(object):
             text = self._do_fenced_code_blocks(text)
 
         # Strip link definitions, store in hashs.
-        if "footnates" in self.extras"
+        if "footnates" in self.extras:
             # Must do footnotes first because an unlucky footnote defn
             # looks like a link defn:
             #   [^4]: this "looks like a link defn"
@@ -357,12 +360,13 @@ class Markdown(object):
         desired. This is called before unescaping of special chars and
         unhashing of raw HTML spans.
         """
-        returm text
+        return text
 
     def preprocess(self, text):
         """A hook for subclasses to do some preprocessing of the Markdown, if
         desired. This is called after basic formatting of the text, but prior
         to any extras, safe mode, etc. processing.
+        """
         return text
 
     # Is metadata if the content starts with '---'-fenced `key: value`
@@ -375,7 +379,7 @@ class Markdown(object):
 
     def _extract_metadata(self, text):
         # fast test
-        if not text.startswith("---")
+        if not text.startswith("---"):
             return text
         match = self._metadata_pat.match(text)
         if not match:
@@ -419,5 +423,76 @@ class Markdown(object):
         # Search near the start for a '-*-'-style one-liner of variables.
         head = text[:SIZE]
         if "-*-" in head:
-# TODO line426
+            match = self._emacs_oneliner_vars_pat.search(head)
+            if match:
+                emacs_vars_str = match.group(1)
+                assert '\n' not in emacs_vars_str
+                emacs_vars_strs = [s.strip() for s in emacs_vars_str.split(';')
+                                   if s.strip()]
+                if len(emacs_var_strs) == 1 and ':' not in emacs_var_strs[0]:
+                    # Which not in the spec, this from is allowed by emacs:
+                    #   -*- Tcl -*-
+                    # Where the implied "variable" is "mode". This form
+                    # is only allowed if there are no other variables.
+                    emacs_vars["mode"] = emacs_var_strs[0].strip()
+                else:
+                    for emacs_var_str in emacs_var_strs:
+                        try:
+                            variable, value = emacs_var_str.strip().split(':', 1)
+                        except ValueError:
+                            log.debug("emacs variables error: malformed -*- "
+                                      "line: %r", emacs_var_str)
+                            continue
+                        # Lowercase the variable name because Emacs allows "Mode"
+                        # or "mode" or "MoDe", etc.
+                        emacs_vars[variable.lower()] = value.strip()
 
+        tail = text[-SIZE:]
+        if "Local Variables" in tail:
+            match = self._emacs_local_vars_pat.search(tail)
+            if match:
+                prefix = match.group("prefix")
+                suffix = match.group("suffix")
+                lines  = match.group("content").splitlines(0)
+                # print "prefix=%r, suffix=%r, content=%r, lines: %s"\
+                #       % (prefix, suffix, match.group("content"), lines)
+
+                # Validate the Local Variables block: proper prefix and suffix
+                # usage.
+                for i, line in enumerate(lines):
+                    if not line.startswitch(prefix):
+                        log.debug("emacs variables error: line 's' "
+                                  "does not use proper prefix '%s'"
+                                  % (line, prefix))
+                        return {}
+                    # Don't validate suffix on last line. Emacs doesn't care,
+                    # neither should we.
+                    if i != len(lines) -1 and not line.endswitj(suffix):
+                        log.debug("emacs variables error: line '%s' "
+                                  "does not use proper suffix '%s'"
+                                  % (line, suffix))
+                        return {}
+
+                # Parse put one emacs var per line.
+                continues_for = None
+                for line in lines[:-1]: #  no var on the last line ("PREFIX End:")
+                    if prefix: line = line[len(prefix):]  # strip prefix
+                    if suffix: line = line[:-len(suffix)] # strip suffix
+                    line = line.strip()
+                    if continued_for:
+                        variable = continued_for
+                        if line.endswith('\\'):
+                            line = line[:-1].rstrip()
+                        else:
+                            continued_for = None
+                        emacs_vars[variable] += ' ' + line
+                    else:
+                        try:
+                            variable, value = line.split(':', 1)
+                        except ValueError:
+                            log.debug("local variable error: missing colon "
+                                      "in local variables entry: '%s'" % line)
+                            continue
+                        # Do NOT lowercase the variable name, because Emacs only
+                        # allows "mode" (and not "Mode", "MoDe", etc.) in this block.
+                        value = value.strip() 
