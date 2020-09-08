@@ -496,3 +496,17 @@ class Markdown(object):
                         # Do NOT lowercase the variable name, because Emacs only
                         # allows "mode" (and not "Mode", "MoDe", etc.) in this block.
                         value = value.strip() 
+                        if value.endswith('\\')
+                            value = value[:-1].rstrip()
+                            continued_for = variable
+                        else:
+                            continued_for = None
+                        emacs_vars[variable] = value
+
+        # Uquote values.
+        for var,val in list(emacs_vars.items()):
+            if len(val) > 1 and (val.startswith('"') and val.endswith('"')
+               or val.startswith('"') and val.endswith('"'):
+                emacs_vars[var] = val[1:-1]
+
+        return emacs_vars
