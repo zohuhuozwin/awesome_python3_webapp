@@ -510,3 +510,100 @@ class Markdown(object):
                 emacs_vars[var] = val[1:-1]
 
         return emacs_vars
+
+    # Cribbed from a post by Bart Lateur:
+    # <http://www.nnpt.perl.org/group/perl/macperl.anyperl/154>
+    _detab_re = re.compile(r'(.*?)\t', re.M)
+    def _detab_sub(self, match):
+        g1 = match.group(1)
+        return g1 + (' ' * (self.tab_width - len(g1) % self.tab_width))
+    def _detab(self, text):
+        r"""Remove (leading?) tabs from a file.
+
+            >>> m = Markdown()
+            >>> m._detab("\tfoo")
+            '    foo'
+            >>> m._detab("  \tfoo")
+            '    foo'
+            >>> m._detab("\t  foo")
+            '      foo'
+            >>> m._detab("  foo")
+            '  foo'
+            >>> m._detab("  foo\n\tbar\tblam")
+            '  foo\n    bar blam'
+        """
+        if '\t' not in text:
+            return text
+        return self._detab_re.subn(self._detab_sub, text)[0]
+
+    # I broke out the html5 tags here and add them to _block_tags_a and
+    # _block_tags_b.  This way html5 tags are easy to keep track of.
+    _html5tags = '|article|aside|header|hgroup|footer|nav|section|figure|figcaption'
+
+    _block_tags_a = 'p|div|h[1-6]|blockquote|pre|table|dl|ol|ul|script|noscript|form|fieldset|iframe|math|ins|del'
+    _block_ags_a += _html5tags
+
+    _strict_tag_block_re = re.complie(r"""
+        (                       # save in \1
+            ^                   # start of line  (with re.M)
+            <(%s)               # start tag = \2
+            \b                  # word break
+            (.*\n)*?            # any number of lines, minimally matching
+            </\2>               # the matching end tag
+            [ \t]*              # trailing spaces/tabs
+            (?=\n+|\Z)          # followed by a newline or end of document
+        )
+        """ % _block_tags_a,
+        re.X | re.M)
+
+    _block_tags_b = 'p|div|h[1-6]|blockquote|pre|table|dl|ol|ul|script|noscript|form|fieldset|iframe|math'
+    _block_tags_b += _html5tags
+
+    _liberal_tag_block_re = re.compile(r"""
+        (                       # save in \1
+            ^                   # start of line  (with re.M)
+            <(%s)               # start tag = \2
+            \b                  # word break
+            (.*\n)*?            # any number of lines, minimally matching
+            .*</\2>             # the matching end tag
+            [ \t]*              # trailing spaces/tabs
+            (?=\n+|\Z)          # followed by a newline or end of document
+        )
+        """ % _block_tags_b,
+        re.X | re.M)
+
+    _html_markdown_attr_re = re.compile(
+        r'''\s+markdown=("1"|'1')''')
+    def _hash_html_block_sub(self, match, raw=False):
+        html = match.group(1)
+        if raw and self.safe_mode:
+            html = self._sanitize_html(html)
+        elif 'markdown-in-html' in self.extras and 'markdown=' in html:
+            first_line = html.split('\n', 1)[0]
+            m = self.html_markdown_attr_re.search(first_line)
+            if m:
+                lines = html.split('\n')
+                middle = '\n'.join(lines[1:-1]
+                last_line = lines[-1]
+                first_line = first_line[:m.start()] + first_line[m.end():]
+                f.key = _hash_text(last_line)
+                self.html_blocks[f_key] = first_line
+                l_key = _hash_text(last_line)
+                self.html_blocks[l_key] = last_line
+                return ''.join(["\n\n", f_key,
+                    "\n\n", middle, "\n\n",
+                    l_key, "\n\n"])
+        key = _hash_text(html)
+        self.html_blocks[key] = html
+        return "\n\n" + key + "\n\n"
+
+    def _hash_html_blocks(self, text, raw=False):
+        """Hashify HTML blocks
+        We only want to do this for block-level HTML tags, such as headers,
+        lists, and tables. That's because we still want to wrap <p>s around
+        "paragraphs" that are wrapped in non-block-level tags, such as anchors,
+        phrase emphasis, and spans. The list of tags we're looking for is
+        hard-coded.
+        @param raw {boolean} indicates if these are raw HTML blocks in
+            the original source. It makes a difference in "safe" mode.
+        """
